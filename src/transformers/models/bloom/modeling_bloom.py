@@ -54,6 +54,36 @@ BLOOM_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ]
 
 
+def _make_causal_mask(
+     input_ids_shape: torch.Size, device: torch.device, past_key_values_length: int
+ ) -> torch.BoolTensor:
+     """
+     Make causal mask used for self-attention.
+     """
+     batch_size, target_length = input_ids_shape
+     mask = torch.empty((target_length, target_length + past_key_values_length), dtype=torch.bool, device=device)
+     # ONNX doesn't support `torch.Tensor.triu` properly, thus we use this workaround
+     seq_ids = torch.arange(target_length, device=device)
+     mask[:, past_key_values_length:] = seq_ids[:, None] < seq_ids[None, :]
+
+     if past_key_values_length > 0:
+         mask[:, :past_key_values_length] = False
+
+     expanded_mask = mask[None, None, :, :].expand(batch_size, 1, target_length, target_length + past_key_values_length)
+     return expanded_mask
+
+
+ def _expand_mask(mask: torch.Tensor, tgt_length: int) -> torch.BoolTensor:
+     """
+     Expands attention_mask from `[batch_size, src_length]` to `[batch_size, 1, tgt_length, src_length]`.
+     """
+     batch_size, src_length = mask.shape
+     tgt_length = tgt_length if tgt_length is not None else src_length
+
+     expanded_mask = ~(mask[:, None, None, :].to(torch.bool))
+     return expanded_mask.expand(batch_size, 1, tgt_length, src_length)
+
+
 def build_alibi_tensor(attention_mask: torch.Tensor, num_heads: int, dtype: torch.dtype) -> torch.Tensor:
     """
     Link to paper: https://arxiv.org/abs/2108.12409 Alibi tensor is not causal as the original paper mentions, it
